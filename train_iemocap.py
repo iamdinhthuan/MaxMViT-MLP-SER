@@ -102,7 +102,7 @@ if __name__ == "__main__":
             correct += predicted.eq(label).sum().item()
             
             if batch_idx % 10 == 0:
-                logging.info(f"   Batch {batch_idx}: Loss {loss.item():.4f}")
+                print(f"   Batch {batch_idx}: Loss {loss.item():.4f}")
             
         avg_loss = total_loss / len(train_loader) if len(train_loader) > 0 else 0
         acc = 100.*correct/total if total > 0 else 0
@@ -125,8 +125,9 @@ if __name__ == "__main__":
                     test_total += label.size(0)
                     test_correct += predicted.eq(label).sum().item()
             
+            avg_test_loss = test_loss / len(test_loader)
             test_acc = 100. * test_correct / test_total if test_total > 0 else 0
-            logging.info(f"   >>> Validation Acc: {test_acc:.2f}%")
+            logging.info(f"   >>> Validation Loss: {avg_test_loss:.4f} | Acc: {test_acc:.2f}%")
         else:
             logging.info("   >>> No validation set (HF dataset might not have validation split active).")
 
