@@ -24,7 +24,9 @@ class IEMOCAPHFDataset(Dataset):
         
         print(f"Loading {hf_id} [{split}]...")
         # Load dataset
-        self.ds = load_dataset(hf_id, split=split)
+        # Disable auto-decoding to avoid torchcodec issues
+        from datasets import Audio
+        self.ds = load_dataset(hf_id, split=split).cast_column("audio", Audio(decode=False))
         
         # Audio params
         self.n_fft = 4096
@@ -81,8 +83,14 @@ class IEMOCAPHFDataset(Dataset):
         # Audio processing
         # item['audio']['array'] is numpy array
         # item['audio']['sampling_rate'] is original SR
-        audio_array = item['audio']['array']
-        orig_sr = item['audio']['sampling_rate']
+        # Audio processing
+        # item['audio']['bytes'] contains raw audio bytes when decode=False
+        audio_bytes = item['audio']['bytes']
+        
+        # Decode with soundfile
+        import soundfile as sf
+        import io
+        y, orig_sr = sf.read(io.BytesIO(audio_bytes))
         
         # Resample if needed
         if orig_sr != self.sr:
