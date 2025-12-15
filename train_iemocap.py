@@ -6,6 +6,17 @@ from dataset_hf import get_hf_dataloaders
 import time
 import os
 import yaml
+import logging
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("log.txt"),
+        logging.StreamHandler()
+    ]
+)
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -31,26 +42,26 @@ if __name__ == "__main__":
     
     ROOT_DIR = dataset_cfg.get('root_dir', "AbstractTTS/IEMOCAP")
     
-    lr = training_cfg.get('lr', 0.001)
+    lr = training_cfg.get('lr', 0.02)
     
-    print(f"Using device: {DEVICE}")
-    print(f"Config loaded: {config}")
+    logging.info(f"Using device: {DEVICE}")
+    logging.info(f"Config loaded: {config}")
     
     # Load Data
     try:
         # Check if it looks like a HF ID (no path separators, usually Owner/Name)
         if "/" in ROOT_DIR and not os.path.exists(ROOT_DIR):
-            print("Detected Hugging Face Dataset ID. Loading from HF Hub...")
+            logging.info("Detected Hugging Face Dataset ID. Loading from HF Hub...")
             train_loader, test_loader = get_hf_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
         else:
-            print("Loading from Local File System...")
+            logging.info("Loading from Local File System...")
             train_loader, test_loader = get_iemocap_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
             
         if train_loader is None:
             raise ValueError("Failed to create dataloaders.")
             
     except Exception as e:
-        print(f"Error loading data: {e}")
+        logging.error(f"Error loading data: {e}")
         # Only exit if critical, but for script usually yes
         exit()
         
@@ -63,7 +74,7 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     
     # Training Loop
-    print("Starting Training...")
+    logging.info("Starting Training...")
     for epoch in range(EPOCHS):
         model.train()
         total_loss = 0
@@ -91,12 +102,12 @@ if __name__ == "__main__":
             correct += predicted.eq(label).sum().item()
             
             if batch_idx % 10 == 0:
-                print(f"   Batch {batch_idx}: Loss {loss.item():.4f}")
+                logging.info(f"   Batch {batch_idx}: Loss {loss.item():.4f}")
             
         avg_loss = total_loss / len(train_loader) if len(train_loader) > 0 else 0
         acc = 100.*correct/total if total > 0 else 0
         
-        print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {avg_loss:.4f} | Acc: {acc:.2f}% | Time: {time.time()-start_time:.2f}s")
+        logging.info(f"Epoch {epoch+1}/{EPOCHS} | Loss: {avg_loss:.4f} | Acc: {acc:.2f}% | Time: {time.time()-start_time:.2f}s")
         
         # Validation
         if test_loader:
@@ -115,8 +126,8 @@ if __name__ == "__main__":
                     test_correct += predicted.eq(label).sum().item()
             
             test_acc = 100. * test_correct / test_total if test_total > 0 else 0
-            print(f"   >>> Validation Acc: {test_acc:.2f}%")
+            logging.info(f"   >>> Validation Acc: {test_acc:.2f}%")
         else:
-            print("   >>> No validation set (HF dataset might not have validation split active).")
+            logging.info("   >>> No validation set (HF dataset might not have validation split active).")
 
-    print("\nTraining Finished.")
+    logging.info("Training Finished.")
