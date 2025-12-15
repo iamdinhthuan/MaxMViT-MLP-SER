@@ -8,7 +8,7 @@ dataset:
 
 training:
   epochs: 10
-  lr: 0.001
+  lr: 0.02
   device: "cuda" # 'cuda' or 'cpu'
 
 model:
