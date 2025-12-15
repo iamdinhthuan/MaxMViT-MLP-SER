@@ -93,12 +93,13 @@ class IEMOCAPHFDataset(Dataset):
         y, orig_sr = sf.read(io.BytesIO(audio_bytes))
         
         # Resample if needed
+        # Resample if needed
         if orig_sr != self.sr:
             # Resample needs float32
-            audio_array = audio_array.astype(np.float32)
-            y = librosa.resample(audio_array, orig_sr=orig_sr, target_sr=self.sr)
+            y = y.astype(np.float32)
+            y = librosa.resample(y, orig_sr=orig_sr, target_sr=self.sr)
         else:
-            y = audio_array.astype(np.float32)
+            y = y.astype(np.float32)
             
         # Ensure y is 1D
         if y.ndim > 1:
