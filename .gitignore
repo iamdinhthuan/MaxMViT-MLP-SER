@@ -13,3 +13,7 @@ read_pdf_content.py
 paper_content.txt
 dataset_info.txt
 inspect_hf_dataset.py
+*.pth
+*.pdf
+log.txt
+*.log

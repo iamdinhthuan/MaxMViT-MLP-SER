@@ -21,13 +21,14 @@ class MaxMViT_MLP(nn.Module):
         
         # --- Path 1: CQT + MaxViT ---
         # Using 'maxvit_rmlp_base_rw_224' or similar. 
-        # Paper mentions MaxViT. We use a standard variant.
-        # We need to remove the classifier head to get features.
-        self.maxvit = timm.create_model('maxvit_rmlp_small_rw_224', pretrained=True, num_classes=0) 
-        
-        # --- Path 2: Mel-STFT + MViTv2 ---
-        # Using 'mvitv2_small' or similar.
-        self.mvitv2 = timm.create_model('mvitv2_small', pretrained=True, num_classes=0)
+        # Paper mentions MaxViT.        # Paper likely uses base/large. Switching to base as per feedback.
+        # MaxViT Base
+        self.maxvit = timm.create_model('maxvit_base_tf_224', pretrained=True, num_classes=0)
+        # MViTv2 Base
+        self.mvitv2 = timm.create_model('mvitv2_base', pretrained=True, num_classes=0)
+
+        # Print config to verify window sizes if possible, or just the model name
+        print(f"Initialized MaxViT: {self.maxvit.default_cfg['architecture']}")
         
         # Calculate feature dimension
         # We need to do a dummy forward pass or check config to know output dim.
@@ -76,10 +77,13 @@ class MaxMViT_MLP(nn.Module):
         # Actually input is 244, let's interpolate to 224 for 'safe' pretrained usage 
         # unless we want to handle positional embedding interpolation.
         # timm handles it usually, but let's be safe.
-        # Paper says 244x244, but MaxViT (window size 7) crashes with 244 input (feature map 61 not divisible by 7).
-        # We interpolate to 224x224 (standard for this pretrained model) to avoid the crash.
-        cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
-        mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
+        # Paper says 244x244. 
+        # But user corrected to 224x224.
+        # So we ensure it is 224 here if needed, or assume it comes in as 224.
+        if cqt.shape[-1] != 224:
+            cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
+        if mel.shape[-1] != 224:
+            mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
 
         # Path 1
         feat_maxvit = self.maxvit(cqt) # [B, Dim1]

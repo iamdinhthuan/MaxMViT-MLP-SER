@@ -1,16 +1,18 @@
 dataset:
   root_dir: "AbstractTTS/IEMOCAP" # local path or HF ID
-  batch_size: 32
-  num_workers: 16 # Number of workers for data loading
-  target_classes: ['neu', 'hap', 'ang', 'sad']
-  sr: 44100
-  target_size: [244, 244]
+  batch_size: 32 # Adjust based on GPU memory
+  num_workers: 16 # Adjust based on CPU cores
+  target_size: [224, 224]
 
 training:
   epochs: 50
   lr: 0.02
   patience: 5 # Early stopping patience
+  scheduler:
+    factor: 0.1
+    patience: 2 # Reduce LR if no improvement for 2 epochs
+    min_lr: 1e-6
   device: "cuda" # 'cuda' or 'cpu'
 
 model:
-  num_classes: 4
+  num_classes: 4 # neu, hap, ang, sad

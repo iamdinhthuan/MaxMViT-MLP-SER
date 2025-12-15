@@ -46,11 +46,20 @@ if __name__ == "__main__":
     PATIENCE = training_cfg.get('patience', 5)
     
     logging.info(f"Using device: {DEVICE}")
+    
+    scheduler_cfg = training_cfg.get('scheduler', {})
+    SCHEDULER_FACTOR = scheduler_cfg.get('factor', 0.1)
+    SCHEDULER_PATIENCE = scheduler_cfg.get('patience', 2)
+    MIN_LR = float(scheduler_cfg.get('min_lr', 1e-6))
     logging.info(f"Config loaded: {config}")
     
     # ... (Load Data block omitted for brevity in search, assuming it follows) ...
     # Initialize Early Stopping
+    # Initialize Early Stopping and Top-K Saving
     best_val_loss = float('inf')
+    patience_counter = 0
+    top_k_checkpoints = [] # List of tuples: (loss, epoch, filename)
+    TOP_K = 3
     patience_counter = 0
     
     # Load Data
@@ -76,7 +85,11 @@ if __name__ == "__main__":
     model.to(DEVICE)
     
     # Optimizers
+
     optimizers = get_optimizer(model, lr=lr) 
+    schedulers = [torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode='min', factor=SCHEDULER_FACTOR, patience=SCHEDULER_PATIENCE, min_lr=MIN_LR
+    ) for opt in optimizers]
     criterion = nn.CrossEntropyLoss()
     
     # Training Loop
@@ -133,17 +146,46 @@ if __name__ == "__main__":
             
             avg_test_loss = test_loss / len(test_loader)
             test_acc = 100. * test_correct / test_total if test_total > 0 else 0
+
             logging.info(f"   >>> Validation Loss: {avg_test_loss:.4f} | Acc: {test_acc:.2f}%")
             
-            # Early Stopping Check
-            if avg_test_loss < best_val_loss:
-                best_val_loss = avg_test_loss
+            # Step Schedulers
+            for sch in schedulers:
+                sch.step(avg_test_loss)
+            
+ 
+
+            # Refined Implementation inside loop:
+            # 1. Save current model directly if it *might* be top-k
+            temp_filename = f"checkpoint_epoch_{epoch+1}.pth"
+            torch.save(model.state_dict(), temp_filename)
+            
+            # 2. Add to list
+            top_k_checkpoints.append({'loss': avg_test_loss, 'epoch': epoch+1, 'path': temp_filename})
+            top_k_checkpoints.sort(key=lambda x: x['loss'])
+            
+            # 3. Remove extra (worst) checkpoints
+            while len(top_k_checkpoints) > TOP_K:
+                to_remove = top_k_checkpoints.pop() # Last one is worst
+                if os.path.exists(to_remove['path']):
+                    os.remove(to_remove['path'])
+                    logging.info(f"   >>> Removed old checkpoint: {to_remove['path']}")
+
+            # 4. Log current status
+            best_val_loss = top_k_checkpoints[0]['loss'] # Update best_val_loss for Early Stopping
+            current_top_losses = [x['loss'] for x in top_k_checkpoints]
+            logging.info(f"   >>> Current Top {TOP_K} Losses: {current_top_losses}")
+            
+            # Early Stopping Check (based on best_val_loss)
+            # If the BEST loss didn't change (i.e. we didn't add a new Rank 1), increment patience?
+            # Or usually patience is "no improvement in BEST loss".
+            if top_k_checkpoints[0]['epoch'] == epoch + 1:
+                # We just found a new global best
                 patience_counter = 0
-                torch.save(model.state_dict(), "best_model.pth")
-                logging.info(f"   >>> Improved! Saved best_model.pth (Loss: {best_val_loss:.4f})")
+                logging.info(f"   >>> Improvement! Patience reset.")
             else:
                 patience_counter += 1
-                logging.info(f"   >>> No improvement. Patience: {patience_counter}/{PATIENCE}")
+                logging.info(f"   >>> No improvement in best loss. Patience: {patience_counter}/{PATIENCE}")
                 
             if patience_counter >= PATIENCE:
                 logging.info("Early stopping triggered.")
@@ -154,3 +196,15 @@ if __name__ == "__main__":
             torch.save(model.state_dict(), "last_model.pth")
 
     logging.info("Training Finished.")
+    
+    # Rename Top K Checkpoints
+    logging.info("Renaming Top K Checkpoints...")
+    for i, ckpt in enumerate(top_k_checkpoints):
+        rank = i + 1
+        old_path = ckpt['path']
+        new_path = f"best_model_rank{rank}.pth"
+        if os.path.exists(old_path):
+            if os.path.exists(new_path):
+                os.remove(new_path)
+            os.rename(old_path, new_path)
+            logging.info(f"   >>> Renamed {old_path} to {new_path} (Loss: {ckpt['loss']:.4f})")

@@ -147,6 +147,6 @@ def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32, nu
     else:
         test_loader = None
         
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
     
     return train_loader, test_loader
