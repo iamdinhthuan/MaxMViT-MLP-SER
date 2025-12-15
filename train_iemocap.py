@@ -5,31 +5,46 @@ from dataset_iemocap import get_iemocap_dataloaders
 from dataset_hf import get_hf_dataloaders
 import time
 import os
+import yaml
+
+def load_config(config_path="config.yaml"):
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
 
 if __name__ == "__main__":
-    # Settings
-    EPOCHS = 10 
-    BATCH_SIZE = 4 
-    NUM_CLASSES = 4 # IEMOCAP 4 classes: neu, hap, ang, sad
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Load Config
+    config = load_config()
     
-    # User can set this to local path OR Hugging Face ID
-    # ROOT_DIR = "mock_iemocap" 
-    # ROOT_DIR = "d:/paper/ser/IEMOCAP_full_release"
-    ROOT_DIR = "AbstractTTS/IEMOCAP" 
+    dataset_cfg = config.get('dataset', {})
+    training_cfg = config.get('training', {})
+    model_cfg = config.get('model', {})
+    
+    # Settings
+    EPOCHS = training_cfg.get('epochs', 10)
+    BATCH_SIZE = dataset_cfg.get('batch_size', 4)
+    NUM_WORKERS = dataset_cfg.get('num_workers', 4)
+    NUM_CLASSES = model_cfg.get('num_classes', 4)
+    
+    device_str = training_cfg.get('device', 'cuda')
+    DEVICE = torch.device(device_str if torch.cuda.is_available() else 'cpu')
+    
+    ROOT_DIR = dataset_cfg.get('root_dir', "AbstractTTS/IEMOCAP")
+    
+    lr = training_cfg.get('lr', 0.001)
     
     print(f"Using device: {DEVICE}")
-    print(f"Dataset root/ID: {ROOT_DIR}")
+    print(f"Config loaded: {config}")
     
     # Load Data
     try:
         # Check if it looks like a HF ID (no path separators, usually Owner/Name)
         if "/" in ROOT_DIR and not os.path.exists(ROOT_DIR):
             print("Detected Hugging Face Dataset ID. Loading from HF Hub...")
-            train_loader, test_loader = get_hf_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE)
+            train_loader, test_loader = get_hf_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
         else:
             print("Loading from Local File System...")
-            train_loader, test_loader = get_iemocap_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE)
+            train_loader, test_loader = get_iemocap_dataloaders(ROOT_DIR, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
             
         if train_loader is None:
             raise ValueError("Failed to create dataloaders.")
@@ -44,7 +59,7 @@ if __name__ == "__main__":
     model.to(DEVICE)
     
     # Optimizers
-    optimizers = get_optimizer(model, lr=0.001) 
+    optimizers = get_optimizer(model, lr=lr) 
     criterion = nn.CrossEntropyLoss()
     
     # Training Loop

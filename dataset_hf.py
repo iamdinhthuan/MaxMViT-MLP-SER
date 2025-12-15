@@ -137,7 +137,7 @@ class IEMOCAPHFDataset(Dataset):
         spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
         return spec_resized
 
-def get_hf_dataloaders(hf_id, batch_size=32):
+def get_hf_dataloaders(hf_id, batch_size=32, num_workers=4):
     # Hugging Face datasets usually have 'train', 'validation', 'test' splits or just 'train'.
     # AbstractTTS/IEMOCAP structure: checking...
     # If standard splits exist:
@@ -152,8 +152,8 @@ def get_hf_dataloaders(hf_id, batch_size=32):
              print("No validation split found. Using subset of train or returning None.")
              val_ds = None
              
-        test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds else None
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if val_ds else None
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         
         return train_loader, test_loader
     except Exception as e:

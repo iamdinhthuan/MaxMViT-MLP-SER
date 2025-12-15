@@ -118,7 +118,7 @@ class IEMOCAPDataset(Dataset):
         spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
         return spec_resized
 
-def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32):
+def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32, num_workers=4):
     """
     Standard Leave-One-Session-Out split.
     Typically Session 1-4 Train, Session 5 Test.
@@ -143,10 +143,10 @@ def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32):
     train_dataset = IEMOCAPDataset(root_dir, sessions=train_sessions)
     if test_sessions:
         test_dataset = IEMOCAPDataset(root_dir, sessions=test_sessions)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     else:
         test_loader = None
         
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     
     return train_loader, test_loader

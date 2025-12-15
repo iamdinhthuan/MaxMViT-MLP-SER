@@ -1,0 +1,15 @@
+dataset:
+  root_dir: "AbstractTTS/IEMOCAP" # local path or HF ID
+  batch_size: 16
+  num_workers: 16 # Number of workers for data loading
+  target_classes: ['neu', 'hap', 'ang', 'sad']
+  sr: 44100
+  target_size: [244, 244]
+
+training:
+  epochs: 10
+  lr: 0.001
+  device: "cuda" # 'cuda' or 'cpu'
+
+model:
+  num_classes: 4
