@@ -147,10 +147,33 @@ def get_hf_dataloaders(hf_id, batch_size=32, num_workers=4):
         try:
             val_ds = IEMOCAPHFDataset(hf_id, split="validation")
         except:
-             # If no validation split, manually split train? 
-             # For simplicity now, let's just assume valid split or use train for both if simple test.
-             print("No validation split found. Using subset of train or returning None.")
-             val_ds = None
+             # If no validation split, manually split train using datasets library feature
+             print("No validation split found. Automatically splitting train set (80/20)...")
+             # We need to access the underlying HF dataset object to split it
+             # BUT IEMOCAPHFDataset wraps it and applies filtering in __init__.
+             # Splitting the filtered indices is cleaner.
+             
+             # Let's split indices of train_ds
+             full_indices = train_ds.indices
+             total_len = len(full_indices)
+             val_len = int(total_len * 0.2)
+             train_len = total_len - val_len
+             
+             # Random shuffle
+             import random
+             random.shuffle(full_indices)
+             
+             train_indices = full_indices[:train_len]
+             val_indices = full_indices[train_len:]
+             
+             # Assign back to train_ds
+             train_ds.indices = train_indices
+             
+             # Create val_ds as a copy but with val indices
+             import copy
+             val_ds = copy.deepcopy(train_ds) 
+             val_ds.indices = val_indices
+             print(f"Split complete. Train: {len(train_ds)}, Val: {len(val_ds)}")
              
         test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if val_ds else None
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
