@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+.DS_Store
+.vscode/
+.idea/
+venv/
+env/
+mock_iemocap/
+IEMOCAP_full_release/
+read_pdf_content.py
+paper_content.txt
+dataset_info.txt
+inspect_hf_dataset.py
