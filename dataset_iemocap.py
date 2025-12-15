@@ -77,8 +77,20 @@ class IEMOCAPDataset(Dataset):
         path, label = self.file_paths[idx]
         
         # Load audio
+        # Load audio using soundfile
+        import soundfile as sf
+        y, orig_sr = sf.read(path)
+        
         # IEMOCAP is typically 16kHz, but paper used 44.1kHz. So we resample.
-        y, sr = librosa.load(path, sr=self.sr)
+        if orig_sr != self.sr:
+             y = librosa.resample(y, orig_sr=orig_sr, target_sr=self.sr)
+             sr = self.sr
+        else:
+             sr = orig_sr
+
+        # Ensure mono
+        if len(y.shape) > 1:
+            y = np.mean(y, axis=1) # Soundfile returns (samples, channels)
         
         # --- Preprocessing same as SERDataset ---
         

@@ -35,8 +35,20 @@ class SERDataset(Dataset):
         path = self.audio_paths[idx]
         label = self.labels[idx]
         
-        # Load audio
-        y, sr = librosa.load(path, sr=self.sr)
+        # Load audio using soundfile
+        import soundfile as sf
+        y, orig_sr = sf.read(path)
+        
+        # Resample if needed
+        if orig_sr != self.sr:
+             y = librosa.resample(y, orig_sr=orig_sr, target_sr=self.sr)
+             sr = self.sr
+        else:
+             sr = orig_sr
+             
+        # Ensure mono
+        if len(y.shape) > 1:
+            y = np.mean(y, axis=1) # Soundfile returns (samples, channels)
         
         # --- Generate CQT ---
         # "Constant-Q resolution... higher resolution at lower frequencies"
