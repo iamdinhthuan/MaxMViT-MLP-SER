@@ -76,9 +76,10 @@ class MaxMViT_MLP(nn.Module):
         # Actually input is 244, let's interpolate to 224 for 'safe' pretrained usage 
         # unless we want to handle positional embedding interpolation.
         # timm handles it usually, but let's be safe.
-        # Paper uses 244x244. timm models usually interpolate pos embeddings automatically.
-        # We pass the 244x244 input directly.
-        pass
+        # Paper says 244x244, but MaxViT (window size 7) crashes with 244 input (feature map 61 not divisible by 7).
+        # We interpolate to 224x224 (standard for this pretrained model) to avoid the crash.
+        cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
+        mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
 
         # Path 1
         feat_maxvit = self.maxvit(cqt) # [B, Dim1]
