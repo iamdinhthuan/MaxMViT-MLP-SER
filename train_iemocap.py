@@ -43,9 +43,15 @@ if __name__ == "__main__":
     ROOT_DIR = dataset_cfg.get('root_dir', "AbstractTTS/IEMOCAP")
     
     lr = training_cfg.get('lr', 0.02)
+    PATIENCE = training_cfg.get('patience', 5)
     
     logging.info(f"Using device: {DEVICE}")
     logging.info(f"Config loaded: {config}")
+    
+    # ... (Load Data block omitted for brevity in search, assuming it follows) ...
+    # Initialize Early Stopping
+    best_val_loss = float('inf')
+    patience_counter = 0
     
     # Load Data
     try:
@@ -128,7 +134,23 @@ if __name__ == "__main__":
             avg_test_loss = test_loss / len(test_loader)
             test_acc = 100. * test_correct / test_total if test_total > 0 else 0
             logging.info(f"   >>> Validation Loss: {avg_test_loss:.4f} | Acc: {test_acc:.2f}%")
+            
+            # Early Stopping Check
+            if avg_test_loss < best_val_loss:
+                best_val_loss = avg_test_loss
+                patience_counter = 0
+                torch.save(model.state_dict(), "best_model.pth")
+                logging.info(f"   >>> Improved! Saved best_model.pth (Loss: {best_val_loss:.4f})")
+            else:
+                patience_counter += 1
+                logging.info(f"   >>> No improvement. Patience: {patience_counter}/{PATIENCE}")
+                
+            if patience_counter >= PATIENCE:
+                logging.info("Early stopping triggered.")
+                break
         else:
+            # If no validation set, we just save last model
             logging.info("   >>> No validation set (HF dataset might not have validation split active).")
+            torch.save(model.state_dict(), "last_model.pth")
 
     logging.info("Training Finished.")
