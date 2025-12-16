@@ -1,0 +1,28 @@
+
+experiment_name: "ravdess_baseline_8class"
+
+dataset:
+  name: "ravdess"
+  args:
+    hf_id: "TwinkStart/RAVDESS"
+    batch_size: 16
+    num_workers: 4
+    target_size: [224, 224]
+
+model:
+  name: "maxmvit_mlp"
+  num_classes: 8 
+
+training:
+  epochs: 50
+  lr: 0.0002
+  patience: 5
+  device: "cuda"
+  scheduler:
+    factor: 0.1
+    patience: 2
+    min_lr: 1e-6
+  
+paths:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
