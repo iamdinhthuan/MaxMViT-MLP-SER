@@ -25,6 +25,10 @@ class IEMOCAPDataset(Dataset):
         self.target_classes = target_classes
         self.class_map = {c: i for i, c in enumerate(target_classes)}
         
+        # Normalization params (ImageNet)
+        self.mean = np.array([0.485, 0.456, 0.406])
+        self.std = np.array([0.229, 0.224, 0.225])
+        
         # Audio params
         self.n_fft = 4096
         self.hop_length = 256
@@ -106,8 +110,8 @@ class IEMOCAPDataset(Dataset):
         cqt_img = self._resize_normalize(cqt_db)
         mel_img = self._resize_normalize(mel_db)
         
-        cqt_tensor = torch.tensor(cqt_img, dtype=torch.float32).unsqueeze(0)
-        mel_tensor = torch.tensor(mel_img, dtype=torch.float32).unsqueeze(0)
+        cqt_tensor = torch.tensor(cqt_img, dtype=torch.float32)
+        mel_tensor = torch.tensor(mel_img, dtype=torch.float32)
         
         return cqt_tensor, mel_tensor, torch.tensor(label, dtype=torch.long)
 
@@ -116,7 +120,17 @@ class IEMOCAPDataset(Dataset):
         spec_max = spec.max()
         spec_norm = (spec - spec_min) / (spec_max - spec_min + 1e-8)
         spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
-        return spec_resized
+        
+        # Convert to 3 channels (RGB) by replicating
+        spec_3ch = np.stack([spec_resized]*3, axis=0) # [3, H, W]
+        
+        # Normalize with ImageNet mean/std
+        # spec_resized is in [0, 1].
+        # We need to perform (x - mean) / std for each channel
+        for i in range(3):
+            spec_3ch[i] = (spec_3ch[i] - self.mean[i]) / self.std[i]
+            
+        return spec_3ch # Returns [3, H, W] numpy array
 
 def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32, num_workers=4):
     """

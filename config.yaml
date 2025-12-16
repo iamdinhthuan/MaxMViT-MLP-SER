@@ -1,12 +1,12 @@
 dataset:
   root_dir: "AbstractTTS/IEMOCAP" # local path or HF ID
-  batch_size: 32 # Adjust based on GPU memory
-  num_workers: 16 # Adjust based on CPU cores
+  batch_size: 16 # Adjust based on GPU memory
+  num_workers: 4 # Adjust based on CPU cores
   target_size: [224, 224]
 
 training:
   epochs: 50
-  lr: 0.02
+  lr: 0.0002 # Reduced from 0.02 for stability
   patience: 5 # Early stopping patience
   scheduler:
     factor: 0.1

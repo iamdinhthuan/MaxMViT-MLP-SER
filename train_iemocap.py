@@ -112,6 +112,10 @@ if __name__ == "__main__":
             loss = criterion(outputs, label)
             
             loss.backward()
+            
+            # Gradient Clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             for opt in optimizers:
                 opt.step()
                 
