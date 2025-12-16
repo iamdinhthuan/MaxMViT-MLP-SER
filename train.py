@@ -6,7 +6,7 @@ import time
 import os
 import logging
 from utils import load_config, setup_logging, seed_everything
-from dataset_factory import get_dataloaders
+from data_loaders import get_dataloaders
 from model import MaxMViT_MLP, get_optimizer
 
 def train(config_path):
