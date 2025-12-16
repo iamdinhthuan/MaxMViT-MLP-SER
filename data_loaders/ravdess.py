@@ -88,6 +88,11 @@ class RAVDESSHFDataset(Dataset):
         if y.ndim > 1:
             y = np.mean(y, axis=0) 
             
+        # Fix: Pad short audio to prevent Librosa warnings
+        if len(y) < self.n_fft:
+            padding = self.n_fft - len(y) + 1
+            y = np.pad(y, (0, padding), mode='constant')
+            
         # --- Preprocessing ---
         try:
             # CQT
