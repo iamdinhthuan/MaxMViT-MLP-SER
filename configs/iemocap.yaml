@@ -6,7 +6,7 @@ dataset:
   args:
     hf_id: "AbstractTTS/IEMOCAP"
     batch_size: 16
-    num_workers: 4
+    num_workers: 16
     target_size: [224, 224]
 
 model:
