@@ -8,7 +8,9 @@ from datasets import load_dataset, Audio
 import logging
 
 class RAVDESSHFDataset(Dataset):
-    def __init__(self, hf_id="TwinkStart/RAVDESS", split="ravdess_emo", target_classes=['neu', 'hap', 'ang', 'sad'], sr=44100, target_size=(224, 224)):
+    def __init__(self, hf_id="TwinkStart/RAVDESS", split="ravdess_emo", 
+                 target_classes=['neutral', 'calm', 'happy', 'sad', 'angry', 'fear', 'disgust', 'surprise'], 
+                 sr=44100, target_size=(224, 224)):
         """
         Dataset class for RAVDESS from Hugging Face.
         """
@@ -34,13 +36,16 @@ class RAVDESSHFDataset(Dataset):
     def filter_data(self):
         self.indices = []
         # RAVDESS usually has: neutral, calm, happy, sad, angry, fearful, disgust, surprised
-        # Mapping to 4 classes
+        # Mapping to 8 classes
         emo_map = {
-            'neutral': 'neu',
-            'calm': 'neu', # Merge calm into neutral
-            'happy': 'hap',
+            'neutral': 'neutral',
+            'calm': 'calm',
+            'happy': 'happy',
             'sad': 'sad',
-            'angry': 'ang'
+            'angry': 'angry',
+            'fearful': 'fear',
+            'disgust': 'disgust',
+            'surprised': 'surprise'
         }
         
         for idx, item in enumerate(self.ds):

@@ -35,7 +35,8 @@ if __name__ == "__main__":
     EPOCHS = training_cfg.get('epochs', 50)
     BATCH_SIZE = dataset_cfg.get('batch_size', 16)
     NUM_WORKERS = dataset_cfg.get('num_workers', 4)
-    NUM_CLASSES = model_cfg.get('num_classes', 4)
+    # Force 8 classes for RAVDESS
+    NUM_CLASSES = 8 
     
     device_str = training_cfg.get('device', 'cuda')
     DEVICE = torch.device(device_str if torch.cuda.is_available() else 'cpu')
