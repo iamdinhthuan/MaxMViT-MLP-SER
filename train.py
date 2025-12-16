@@ -13,11 +13,13 @@ def train(config_path):
     # 1. Load Config & Setup
     config = load_config(config_path)
     ckpt_dir = setup_logging(config)
-    seed_everything(42)
     
     # 2. Extract Configs
     train_cfg = config['training']
     model_cfg = config['model']
+    
+    SEED = train_cfg.get('seed', 42)
+    seed_everything(SEED)
     
     DEVICE = torch.device(train_cfg.get('device', 'cuda') if torch.cuda.is_available() else 'cpu')
     EPOCHS = train_cfg.get('epochs', 50)
