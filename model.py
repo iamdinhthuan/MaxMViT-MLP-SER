@@ -34,7 +34,8 @@ class MaxMViT_MLP(nn.Module):
         # We need to do a dummy forward pass or check config to know output dim.
         # Typically: MaxViT Small ~768, MViTv2 Small ~768 (checking needed)
         with torch.no_grad():
-            dummy_input = torch.randn(1, 3, 224, 224) # Standard size
+            # Use 224 for feature dim calc because we interpolate to 224 before backbone
+            dummy_input = torch.randn(1, 3, 224, 224) 
             maxvit_dim = self.maxvit(dummy_input).shape[1]
             mvitv2_dim = self.mvitv2(dummy_input).shape[1]
             
@@ -72,18 +73,23 @@ class MaxMViT_MLP(nn.Module):
             mel = mel.repeat(1, 3, 1, 1)
             
         # Resize to 224x224 if model expects it (timm models usually strict or better at native res)
-        # Paper says 244x244. MaxViT supports arbitrary. MViTv2 might. 
-        # Using interpolation to match standard 224 if needed, but let's try keeping input size.
-        # Actually input is 244, let's interpolate to 224 for 'safe' pretrained usage 
-        # unless we want to handle positional embedding interpolation.
-        # timm handles it usually, but let's be safe.
         # Paper says 244x244. 
-        # But user corrected to 224x224.
-        # So we ensure it is 224 here if needed, or assume it comes in as 224.
+        # User requested 244x244.
+        
+        # MaxViT usually requires input divisible by 32 (224 is, 244 is NOT).
+        # 244 / 32 = 7.625.
+        # If we pass 244, MaxViT might error or perform poorly due to window padding.
+        # However, to satisfy the requirement, we pass it through.
+        # If strict compatibility is needed, we could interpolate to 224 here if we encounter errors.
+        
+        # Fix: MaxViT architecture restricts input size to be divisible by window size (7).
+        # 244 is NOT divisible by 7. This causes a crash.
+        # To support the user's request for 244 input (from config), we MUST interpolate to 224 
+        # before the backbone to fit the fixed architecture constraints.
         if cqt.shape[-1] != 224:
-            cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
+             cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
         if mel.shape[-1] != 224:
-            mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
+             mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
 
         # Path 1
         feat_maxvit = self.maxvit(cqt) # [B, Dim1]
