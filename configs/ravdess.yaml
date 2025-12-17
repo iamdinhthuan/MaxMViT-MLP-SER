@@ -15,7 +15,7 @@ model:
 
 training:
   epochs: 50
-  lr: 0.001 # Paper value (CRITICAL: 0.02)
+  lr: 0.0002 # Paper value (CRITICAL: 0.02)
   patience: 5
   seed: 42
   device: "cuda"
