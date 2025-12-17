@@ -107,6 +107,11 @@ class IEMOCAPHFDataset(Dataset):
         # Ensure y is 1D
         if y.ndim > 1:
             y = np.mean(y, axis=0) # Convert stereo to mono
+
+        # Fix: Pad short audio to prevent Librosa warnings
+        if len(y) < self.n_fft:
+            padding = self.n_fft - len(y) + 1
+            y = np.pad(y, (0, padding), mode='constant')
             
         # --- Preprocessing same as SERDataset ---
         
@@ -189,7 +194,7 @@ def get_hf_dataloaders(hf_id, batch_size=32, num_workers=4):
              print(f"Split complete. Train: {len(train_ds)}, Val: {len(val_ds)}")
              
         test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if val_ds else None
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
         
         return train_loader, test_loader
     except Exception as e:

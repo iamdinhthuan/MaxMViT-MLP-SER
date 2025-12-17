@@ -95,6 +95,11 @@ class IEMOCAPDataset(Dataset):
         # Ensure mono
         if len(y.shape) > 1:
             y = np.mean(y, axis=1) # Soundfile returns (samples, channels)
+            
+        # Fix: Pad short audio to prevent Librosa warnings
+        if len(y) < self.n_fft:
+            padding = self.n_fft - len(y) + 1
+            y = np.pad(y, (0, padding), mode='constant')
         
         # --- Preprocessing same as SERDataset ---
         
