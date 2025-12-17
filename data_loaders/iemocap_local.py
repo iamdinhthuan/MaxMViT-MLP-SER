@@ -64,8 +64,8 @@ class IEMOCAPDataset(Dataset):
                         emotion = parts[2]
                         
                         # Merge 'exc' to 'hap'
-                        if emotion == 'exc':
-                            emotion = 'hap'
+                        # if emotion == 'exc':
+                        #     emotion = 'hap'
                             
                         if emotion in self.target_classes:
                             wav_path = os.path.join(wav_dir, f"{turn_id}.wav")

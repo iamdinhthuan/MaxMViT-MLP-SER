@@ -54,18 +54,17 @@ class IEMOCAPHFDataset(Dataset):
             # sad: sad
             # neu: neutral
             
-            if emo == 'excited':
-                emo = 'happy'
+            # if emo == 'excited':
+            #     emo = 'happy'
                 
             # Convert to 3-char code for consistency with my other code if needed, 
             # Or just map the string 'happy' to what my target_classes expects.
             # My target_classes in train script are ['neu', 'hap', 'ang', 'sad'].
             # So I should map 'neutral' -> 'neu', 'happy' -> 'hap', 'angry' -> 'ang', 'sad' -> 'sad'.
-            
             emo_map = {
                 'neutral': 'neu',
                 'happy': 'hap',
-                'excited': 'hap',
+                # 'excited': 'hap',
                 'angry': 'ang',
                 'sad': 'sad'
             }
