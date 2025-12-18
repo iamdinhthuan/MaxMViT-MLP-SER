@@ -11,7 +11,14 @@ dataset:
 
 model:
   name: "maxmvit_mlp"
+  type: "crossattn"  # Options: original, gmu, crossattn
   num_classes: 4
+  hidden_size: 512
+  dropout_rate: 0.2
+  # Cross-Attention specific
+  num_heads: 8
+  fusion_type: "concat"  # Options: concat, add, gated
+
 
 training:
   epochs: 50

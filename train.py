@@ -12,7 +12,64 @@ warnings.filterwarnings('ignore', message='n_fft=.*is too large for input signal
 
 from utils import load_config, setup_logging, seed_everything
 from data_loaders import get_dataloaders
+
+# Model imports
 from model import MaxMViT_MLP, get_optimizer
+from model_gmu import MaxMViT_MLP_GMU, get_optimizer_gmu
+from model_crossattn import MaxMViT_MLP_CrossAttn, get_optimizer_crossattn
+
+def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
+    """
+    Factory function to get model and optimizer based on model_type.
+    
+    Args:
+        model_type: 'original', 'gmu', or 'crossattn'
+        num_classes: Number of emotion classes
+        lr: Learning rate
+        model_cfg: Model configuration dict
+        
+    Returns:
+        model: The model instance
+        optimizers: List of optimizers
+    """
+    hidden_size = model_cfg.get('hidden_size', 512)
+    dropout_rate = model_cfg.get('dropout_rate', 0.2)
+    
+    if model_type == 'original':
+        logging.info("Using Original Model (Simple Concatenation Fusion)")
+        model = MaxMViT_MLP(num_classes=num_classes, hidden_size=hidden_size, dropout_rate=dropout_rate)
+        optimizers = get_optimizer(model, lr=lr)
+        
+    elif model_type == 'gmu':
+        logging.info("Using GMU Model (Gated Multimodal Unit Fusion)")
+        fusion_hidden_dim = model_cfg.get('fusion_hidden_dim', None)
+        model = MaxMViT_MLP_GMU(
+            num_classes=num_classes, 
+            hidden_size=hidden_size, 
+            dropout_rate=dropout_rate,
+            fusion_hidden_dim=fusion_hidden_dim
+        )
+        optimizers = get_optimizer_gmu(model, lr=lr)
+        
+    elif model_type == 'crossattn':
+        logging.info("Using Cross-Attention Model (Bidirectional Cross-Attention Fusion)")
+        fusion_hidden_dim = model_cfg.get('fusion_hidden_dim', None)
+        num_heads = model_cfg.get('num_heads', 8)
+        fusion_type = model_cfg.get('fusion_type', 'concat')
+        model = MaxMViT_MLP_CrossAttn(
+            num_classes=num_classes,
+            hidden_size=hidden_size,
+            dropout_rate=dropout_rate,
+            fusion_hidden_dim=fusion_hidden_dim,
+            num_heads=num_heads,
+            fusion_type=fusion_type
+        )
+        optimizers = get_optimizer_crossattn(model, lr=lr)
+        
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}. Choose from: original, gmu, crossattn")
+        
+    return model, optimizers
 
 def train(config_path):
     # 1. Load Config & Setup
@@ -37,14 +94,14 @@ def train(config_path):
         logging.error("Failed to load data.")
         return
 
-    # 4. Model
+    # 4. Model - Select based on config
     num_classes = model_cfg.get('num_classes', 4)
+    model_type = model_cfg.get('type', 'crossattn')  # Default to crossattn
     logging.info(f"Initializing Model with {num_classes} classes...")
-    model = MaxMViT_MLP(num_classes=num_classes)
-    model.to(DEVICE)
     
-    # 5. Optimization
-    optimizers = get_optimizer(model, lr=LR)
+    model, optimizers = get_model_and_optimizer(model_type, num_classes, LR, model_cfg)
+    model.to(DEVICE)
+
     
     sched_cfg = train_cfg.get('scheduler', {})
     schedulers = [torch.optim.lr_scheduler.ReduceLROnPlateau(
