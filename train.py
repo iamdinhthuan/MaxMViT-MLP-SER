@@ -5,6 +5,11 @@ import torch.nn as nn
 import time
 import os
 import logging
+import warnings
+
+# Suppress librosa n_fft warnings
+warnings.filterwarnings('ignore', message='n_fft=.*is too large for input signal')
+
 from utils import load_config, setup_logging, seed_everything
 from data_loaders import get_dataloaders
 from model import MaxMViT_MLP, get_optimizer
@@ -53,9 +58,9 @@ def train(config_path):
     
     # 6. Training Loop
     logging.info("Starting Training...")
-    best_val_loss = float('inf')
+    best_val_acc = 0.0
     patience_counter = 0
-    top_k_checkpoints = [] # {'loss': float, 'epoch': int, 'path': str}
+    top_k_checkpoints = [] # {'acc': float, 'epoch': int, 'path': str}
     TOP_K = 3
     
     for epoch in range(EPOCHS):
@@ -126,21 +131,21 @@ def train(config_path):
         save_path = os.path.join(ckpt_dir, filename)
         torch.save(model.state_dict(), save_path)
         
-        # Maintain Top-K list
-        top_k_checkpoints.append({'loss': val_loss, 'epoch': epoch+1, 'path': save_path})
-        top_k_checkpoints.sort(key=lambda x: x['loss'])
+        # Maintain Top-K list (sorted by accuracy descending - highest first)
+        top_k_checkpoints.append({'acc': val_acc, 'loss': val_loss, 'epoch': epoch+1, 'path': save_path})
+        top_k_checkpoints.sort(key=lambda x: x['acc'], reverse=True)
         
-        # Cleanup
+        # Cleanup - remove worst accuracy checkpoints
         while len(top_k_checkpoints) > TOP_K:
-            to_remove = top_k_checkpoints.pop() # Worst one
+            to_remove = top_k_checkpoints.pop() # Worst one (lowest accuracy)
             if os.path.exists(to_remove['path']):
                 os.remove(to_remove['path'])
-                logging.info(f"Removed checkpoint: {os.path.basename(to_remove['path'])} (Loss: {to_remove['loss']:.4f})")
+                logging.info(f"Removed checkpoint: {os.path.basename(to_remove['path'])} (Acc: {to_remove['acc']:.2f}%)")
                 
-        # Early Stopping
+        # Early Stopping based on validation accuracy
         if top_k_checkpoints[0]['epoch'] == epoch + 1:
             patience_counter = 0 # New Best
-            logging.info(f"New Best Model! Loss: {val_loss:.4f}")
+            logging.info(f"New Best Model! Acc: {val_acc:.2f}%")
         else:
             patience_counter += 1
             if patience_counter >= PATIENCE:
@@ -151,7 +156,7 @@ def train(config_path):
     logging.info("Renaming Top Checkpoints...")
     for i, ckpt in enumerate(top_k_checkpoints):
         rank = i + 1
-        new_name = f"rank{rank}_loss{ckpt['loss']:.4f}_epoch{ckpt['epoch']}.pth"
+        new_name = f"rank{rank}_acc{ckpt['acc']:.2f}_loss{ckpt['loss']:.4f}_epoch{ckpt['epoch']}.pth"
         new_path = os.path.join(ckpt_dir, new_name)
         if os.path.exists(ckpt['path']):
             os.rename(ckpt['path'], new_path)

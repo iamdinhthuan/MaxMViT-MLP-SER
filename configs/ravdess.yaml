@@ -16,12 +16,12 @@ model:
 training:
   epochs: 50
   lr: 0.0002 # Paper value (CRITICAL: 0.02)
-  patience: 5
+  patience: 10
   seed: 42
   device: "cuda"
   scheduler:
     factor: 0.1
-    patience: 2
+    patience: 3
     min_lr: 1e-6
   
 paths:
