@@ -17,7 +17,9 @@ model:
   dropout_rate: 0.2
   # Cross-Attention specific
   num_heads: 8
+  num_cross_layers: 2  # Number of cross-attention layers
   fusion_type: "concat"  # Options: concat, add, gated
+
  
 
 training:

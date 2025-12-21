@@ -53,18 +53,19 @@ def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
         
     elif model_type == 'crossattn':
         logging.info("Using Cross-Attention Model (Bidirectional Cross-Attention Fusion)")
-        fusion_hidden_dim = model_cfg.get('fusion_hidden_dim', None)
         num_heads = model_cfg.get('num_heads', 8)
+        num_cross_layers = model_cfg.get('num_cross_layers', 2)
         fusion_type = model_cfg.get('fusion_type', 'concat')
         model = MaxMViT_MLP_CrossAttn(
             num_classes=num_classes,
             hidden_size=hidden_size,
             dropout_rate=dropout_rate,
-            fusion_hidden_dim=fusion_hidden_dim,
             num_heads=num_heads,
+            num_cross_layers=num_cross_layers,
             fusion_type=fusion_type
         )
         optimizers = get_optimizer_crossattn(model, lr=lr)
+
         
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Choose from: original, gmu, crossattn")
