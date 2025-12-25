@@ -34,8 +34,17 @@ from model_gmu import MaxMViT_MLP_GMU, get_optimizer_gmu
 from model_crossattn import MaxMViT_MLP_CrossAttn, get_optimizer_crossattn
 
 
-def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
-    """Factory function to get model and optimizer based on model_type."""
+def get_model_and_optimizer(model_type, num_classes, lr, model_cfg, fusion_type_override=None):
+    """
+    Factory function to get model and optimizer based on model_type.
+    
+    Args:
+        model_type: 'original', 'gmu', or 'crossattn'
+        num_classes: Number of output classes
+        lr: Learning rate
+        model_cfg: Model configuration dict
+        fusion_type_override: Override fusion_type for crossattn (None uses config default)
+    """
     hidden_size = model_cfg.get('hidden_size', 512)
     dropout_rate = model_cfg.get('dropout_rate', 0.2)
     
@@ -56,7 +65,8 @@ def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
     elif model_type == 'crossattn':
         num_heads = model_cfg.get('num_heads', 8)
         num_cross_layers = model_cfg.get('num_cross_layers', 2)
-        fusion_type = model_cfg.get('fusion_type', 'concat')
+        # Use override if provided, otherwise use config default
+        fusion_type = fusion_type_override if fusion_type_override else model_cfg.get('fusion_type', 'concat')
         model = MaxMViT_MLP_CrossAttn(
             num_classes=num_classes,
             hidden_size=hidden_size,
@@ -66,7 +76,6 @@ def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
             fusion_type=fusion_type
         )
         optimizers = get_optimizer_crossattn(model, lr=lr)
-
         
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -74,12 +83,20 @@ def get_model_and_optimizer(model_type, num_classes, lr, model_cfg):
     return model, optimizers
 
 
-def train_single_model(model_type, config, train_loader, val_loader, logger):
+def train_single_model(model_type, config, train_loader, val_loader, logger, fusion_type=None):
     """
     Train a single model variant and return results.
     
+    Args:
+        model_type: 'original', 'gmu', or 'crossattn'
+        config: Configuration dict
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        logger: Logger instance
+        fusion_type: Fusion type override for crossattn model (None for original/gmu)
+    
     Returns:
-        dict with keys: model_type, best_val_acc, best_val_loss, best_epoch, total_time
+        dict with keys: model_type, fusion_type, best_val_acc, best_val_loss, best_epoch, total_time
     """
     train_cfg = config['training']
     model_cfg = config['model']
@@ -89,18 +106,24 @@ def train_single_model(model_type, config, train_loader, val_loader, logger):
     LR = train_cfg.get('lr', 0.0002)
     PATIENCE = train_cfg.get('patience', 10)
     
-    # Get model
+    # Get model with fusion_type override
     num_classes = model_cfg.get('num_classes', 4)
-    model, optimizers = get_model_and_optimizer(model_type, num_classes, LR, model_cfg)
+    model, optimizers = get_model_and_optimizer(model_type, num_classes, LR, model_cfg, fusion_type)
     model.to(DEVICE)
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
+    # Create variant name for logging
+    if fusion_type:
+        variant_name = f"{model_type}_{fusion_type}"
+    else:
+        variant_name = model_type
+    
     logger.info(f"")
     logger.info(f"{'='*60}")
-    logger.info(f"Training: {model_type.upper()}")
+    logger.info(f"Training: {variant_name.upper()}")
     logger.info(f"{'='*60}")
     logger.info(f"Total params: {total_params:,}")
     logger.info(f"Trainable params: {trainable_params:,}")
@@ -174,7 +197,7 @@ def train_single_model(model_type, config, train_loader, val_loader, logger):
         for sch in schedulers: sch.step(val_acc)
 
         epoch_time = time.time() - epoch_start
-        logger.info(f"[{model_type}] Epoch {epoch+1:02d} | Train [L:{train_loss:.4f} A:{train_acc:.1f}%] | Val [L:{val_loss:.4f} A:{val_acc:.1f}%] | Time: {epoch_time:.1f}s")
+        logger.info(f"[{variant_name}] Epoch {epoch+1:02d} | Train [L:{train_loss:.4f} A:{train_acc:.1f}%] | Val [L:{val_loss:.4f} A:{val_acc:.1f}%] | Time: {epoch_time:.1f}s")
         
         # Early Stopping based on val accuracy
         if val_acc > best_val_acc:
@@ -182,17 +205,19 @@ def train_single_model(model_type, config, train_loader, val_loader, logger):
             best_val_loss = val_loss
             best_epoch = epoch + 1
             patience_counter = 0
-            logger.info(f"[{model_type}] ★ New Best! Acc: {val_acc:.2f}%")
+            logger.info(f"[{variant_name}] ★ New Best! Acc: {val_acc:.2f}%")
         else:
             patience_counter += 1
             if patience_counter >= PATIENCE:
-                logger.info(f"[{model_type}] Early stopping at epoch {epoch+1}")
+                logger.info(f"[{variant_name}] Early stopping at epoch {epoch+1}")
                 break
     
     total_time = time.time() - start_time
     
     result = {
         'model_type': model_type,
+        'fusion_type': fusion_type if fusion_type else ('concat' if model_type == 'original' else 'gated' if model_type == 'gmu' else 'unknown'),
+        'variant_name': variant_name,
         'best_val_acc': best_val_acc,
         'best_val_loss': best_val_loss,
         'best_epoch': best_epoch,
@@ -202,7 +227,7 @@ def train_single_model(model_type, config, train_loader, val_loader, logger):
         'trainable_params': trainable_params
     }
     
-    logger.info(f"[{model_type}] Finished! Best Acc: {best_val_acc:.2f}% at epoch {best_epoch}")
+    logger.info(f"[{variant_name}] Finished! Best Acc: {best_val_acc:.2f}% at epoch {best_epoch}")
     
     # Clean up GPU memory
     del model
@@ -215,19 +240,14 @@ def generate_comparison_table(results, logger):
     """Generate a markdown comparison table from results."""
     
     # Prepare table data
-    headers = ["Model", "Fusion Type", "Best Val Acc (%)", "Best Val Loss", "Best Epoch", "Total Epochs", "Time (min)", "Params (M)"]
-    
-    fusion_names = {
-        'original': 'Concatenation',
-        'gmu': 'Gated Multimodal Unit',
-        'crossattn': 'Cross-Attention'
-    }
+    headers = ["Variant", "Model", "Fusion Type", "Best Val Acc (%)", "Best Val Loss", "Best Epoch", "Total Epochs", "Time (min)", "Params (M)"]
     
     table_data = []
     for r in results:
         table_data.append([
+            r['variant_name'].upper(),
             r['model_type'].upper(),
-            fusion_names.get(r['model_type'], 'Unknown'),
+            r['fusion_type'],
             f"{r['best_val_acc']:.2f}",
             f"{r['best_val_loss']:.4f}",
             r['best_epoch'],
@@ -237,22 +257,23 @@ def generate_comparison_table(results, logger):
         ])
     
     # Sort by best accuracy (descending)
-    table_data.sort(key=lambda x: float(x[2]), reverse=True)
+    table_data.sort(key=lambda x: float(x[3]), reverse=True)
     
     # Generate table
     table_str = tabulate(table_data, headers=headers, tablefmt="pipe")
     
     logger.info("")
-    logger.info("=" * 80)
-    logger.info("COMPARISON RESULTS")
-    logger.info("=" * 80)
+    logger.info("=" * 100)
+    logger.info("COMPARISON RESULTS (5 VARIANTS)")
+    logger.info("=" * 100)
     logger.info("")
     logger.info(table_str)
     logger.info("")
     
     # Find winner
     winner = max(results, key=lambda x: x['best_val_acc'])
-    logger.info(f"🏆 WINNER: {winner['model_type'].upper()} with {winner['best_val_acc']:.2f}% accuracy")
+    logger.info(f"🏆 WINNER: {winner['variant_name'].upper()} with {winner['best_val_acc']:.2f}% accuracy")
+
     
     return table_str
 
@@ -303,13 +324,24 @@ def train_compare(config_path):
         return
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
     
-    # Train all 3 models
-    model_types = ['original', 'gmu', 'crossattn']
+    # Train all 5 model variants:
+    # 1. original (concat fusion - fixed)
+    # 2. gmu (gated fusion - fixed)
+    # 3. crossattn + concat
+    # 4. crossattn + add
+    # 5. crossattn + gated
+    model_variants = [
+        ('original', None),
+        ('gmu', None),
+        ('crossattn', 'concat'),
+        ('crossattn', 'add'),
+        ('crossattn', 'gated'),
+    ]
     results = []
     
-    for model_type in model_types:
+    for model_type, fusion_type in model_variants:
         seed_everything(SEED)  # Reset seed for fair comparison
-        result = train_single_model(model_type, config, train_loader, val_loader, logger)
+        result = train_single_model(model_type, config, train_loader, val_loader, logger, fusion_type)
         results.append(result)
     
     # Generate comparison table
