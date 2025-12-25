@@ -7,6 +7,9 @@ import librosa
 import numpy as np
 import cv2
 
+# Delta features for meaningful 3-channel input
+from .delta_features import extract_cqt_with_delta, extract_mel_with_delta
+
 class IEMOCAPDataset(Dataset):
     def __init__(self, root_dir, sessions=None, target_classes=['neu', 'hap', 'ang', 'sad'], sr=44100, target_size=(244, 244)):
         """
@@ -101,41 +104,24 @@ class IEMOCAPDataset(Dataset):
             padding = self.n_fft - len(y) + 1
             y = np.pad(y, (0, padding), mode='constant')
         
-        # --- Preprocessing same as SERDataset ---
+        # --- Extract features with DELTA (meaningful 3-channel) ---
         
-        # CQT
-        cqt = librosa.cqt(y, sr=sr)
-        cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
+        # CQT with delta features: [3, H, W]
+        cqt_img = extract_cqt_with_delta(y, sr, self.target_size)
         
-        # Mel-STFT
-        mel = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=self.n_fft, hop_length=self.hop_length)
-        mel_db = librosa.power_to_db(mel, ref=np.max)
-        
-        # Resize & Normalize
-        cqt_img = self._resize_normalize(cqt_db)
-        mel_img = self._resize_normalize(mel_db)
+        # Mel with delta features: [3, H, W]
+        mel_img = extract_mel_with_delta(y, sr, self.n_fft, self.hop_length, self.target_size)
         
         cqt_tensor = torch.tensor(cqt_img, dtype=torch.float32)
         mel_tensor = torch.tensor(mel_img, dtype=torch.float32)
         
         return cqt_tensor, mel_tensor, torch.tensor(label, dtype=torch.long)
 
+    # Note: _resize_normalize is no longer used - kept for backward compatibility
     def _resize_normalize(self, spec):
-        spec_min = spec.min()
-        spec_max = spec.max()
-        spec_norm = (spec - spec_min) / (spec_max - spec_min + 1e-8)
-        spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
-        
-        # Convert to 3 channels (RGB) by replicating
-        spec_3ch = np.stack([spec_resized]*3, axis=0) # [3, H, W]
-        
-        # Normalize with ImageNet mean/std
-        # spec_resized is in [0, 1].
-        # We need to perform (x - mean) / std for each channel
-        for i in range(3):
-            spec_3ch[i] = (spec_3ch[i] - self.mean[i]) / self.std[i]
-            
-        return spec_3ch # Returns [3, H, W] numpy array
+        """Legacy method - replaced by delta_features module"""
+        from .delta_features import resize_normalize_with_delta
+        return resize_normalize_with_delta(spec, self.target_size)
 
 def get_iemocap_dataloaders(root_dir, test_session='Session5', batch_size=32, num_workers=4):
     """

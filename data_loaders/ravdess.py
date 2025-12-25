@@ -7,6 +7,9 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset, Audio
 import logging
 
+# Delta features for meaningful 3-channel input
+from .delta_features import extract_cqt_with_delta, extract_mel_with_delta
+
 class RAVDESSHFDataset(Dataset):
     def __init__(self, hf_id="TwinkStart/RAVDESS", split="ravdess_emo", 
                  target_classes=['neutral', 'calm', 'happy', 'sad', 'angry', 'fear', 'disgust', 'surprise'], 
@@ -93,19 +96,13 @@ class RAVDESSHFDataset(Dataset):
             padding = self.n_fft - len(y) + 1
             y = np.pad(y, (0, padding), mode='constant')
             
-        # --- Preprocessing ---
+        # --- Extract features with DELTA (meaningful 3-channel) ---
         try:
-            # CQT
-            cqt = librosa.cqt(y, sr=self.sr)
-            cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
+            # CQT with delta features: [3, H, W]
+            cqt_img = extract_cqt_with_delta(y, self.sr, self.target_size)
             
-            # Mel-STFT
-            mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_fft=self.n_fft, hop_length=self.hop_length)
-            mel_db = librosa.power_to_db(mel, ref=np.max)
-            
-            # Resize & Normalize
-            cqt_img = self._resize_normalize(cqt_db)
-            mel_img = self._resize_normalize(mel_db)
+            # Mel with delta features: [3, H, W]
+            mel_img = extract_mel_with_delta(y, self.sr, self.n_fft, self.hop_length, self.target_size)
             
             cqt_tensor = torch.tensor(cqt_img, dtype=torch.float32)
             mel_tensor = torch.tensor(mel_img, dtype=torch.float32)
@@ -116,20 +113,11 @@ class RAVDESSHFDataset(Dataset):
             dummy_img = torch.zeros((3, self.target_size[0], self.target_size[1]), dtype=torch.float32)
             return dummy_img, dummy_img, torch.tensor(label, dtype=torch.long)
 
+    # Note: _resize_normalize is no longer used - kept for backward compatibility
     def _resize_normalize(self, spec):
-        spec_min = spec.min()
-        spec_max = spec.max()
-        spec_norm = (spec - spec_min) / (spec_max - spec_min + 1e-8)
-        spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
-        
-        # 3 Channels
-        spec_3ch = np.stack([spec_resized]*3, axis=0)
-        
-        # ImageNet Norm
-        for i in range(3):
-            spec_3ch[i] = (spec_3ch[i] - self.mean[i]) / self.std[i]
-            
-        return spec_3ch
+        """Legacy method - replaced by delta_features module"""
+        from .delta_features import resize_normalize_with_delta
+        return resize_normalize_with_delta(spec, self.target_size)
 
 def get_ravdess_dataloaders(hf_id="TwinkStart/RAVDESS", batch_size=16, num_workers=4):
     try:
