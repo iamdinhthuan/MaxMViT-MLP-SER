@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 
 class IEMOCAPHFDataset(Dataset):
-    def __init__(self, hf_id="AbstractTTS/IEMOCAP", split="train", target_classes=['neu', 'hap', 'ang', 'sad'], sr=44100, target_size=(244, 244)):
+    def __init__(self, hf_id="AbstractTTS/IEMOCAP", split="train", target_classes=['neu', 'hap', 'ang', 'sad'], sr=44100, target_size=(244, 244), augment=False):
         """
         Dataset class for IEMOCAP from Hugging Face.
         
@@ -16,13 +16,15 @@ class IEMOCAPHFDataset(Dataset):
             target_classes (list): List of emotions to classify.
             sr (int): Sampling rate.
             target_size (tuple): Spec image size.
+            augment (bool): Whether to apply SpecAugment (training only).
         """
         self.sr = sr
         self.target_size = target_size
         self.target_classes = target_classes
         self.class_map = {c: i for i, c in enumerate(target_classes)}
+        self.augment = augment
         
-        print(f"Loading {hf_id} [{split}]...")
+        print(f"Loading {hf_id} [{split}]... (augment={augment})")
         # Load dataset
         # Disable auto-decoding to avoid torchcodec issues
         from datasets import Audio
@@ -124,9 +126,14 @@ class IEMOCAPHFDataset(Dataset):
             mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_fft=self.n_fft, hop_length=self.hop_length)
             mel_db = librosa.power_to_db(mel, ref=np.max)
             
-            # Resize & Normalize
-            cqt_img = self._resize_normalize(cqt_db)
-            mel_img = self._resize_normalize(mel_db)
+            # Apply SpecAugment if training
+            if self.augment:
+                cqt_db = self._spec_augment(cqt_db)
+                mel_db = self._spec_augment(mel_db)
+            
+            # Resize & Normalize with Delta Features
+            cqt_img = self._resize_normalize_delta(cqt_db)
+            mel_img = self._resize_normalize_delta(mel_db)
             
             cqt_tensor = torch.tensor(cqt_img, dtype=torch.float32)
             mel_tensor = torch.tensor(mel_img, dtype=torch.float32)
@@ -138,32 +145,85 @@ class IEMOCAPHFDataset(Dataset):
             dummy_img = torch.zeros((3, self.target_size[0], self.target_size[1]), dtype=torch.float32)
             return dummy_img, dummy_img, torch.tensor(label, dtype=torch.long)
 
-    def _resize_normalize(self, spec):
+    def _spec_augment(self, spec, time_mask_param=30, freq_mask_param=15, num_masks=2):
+        """
+        Apply SpecAugment: time masking and frequency masking.
+        
+        Args:
+            spec: Input spectrogram [freq, time]
+            time_mask_param: Maximum time mask width
+            freq_mask_param: Maximum frequency mask width
+            num_masks: Number of masks to apply
+        """
+        spec = spec.copy()  # Don't modify original
+        freq_bins, time_steps = spec.shape
+        
+        # Time masking
+        for _ in range(num_masks):
+            if time_steps > time_mask_param:
+                t = np.random.randint(1, time_mask_param)
+                t0 = np.random.randint(0, time_steps - t)
+                spec[:, t0:t0+t] = spec.min()  # Mask to min value
+        
+        # Frequency masking
+        for _ in range(num_masks):
+            if freq_bins > freq_mask_param:
+                f = np.random.randint(1, freq_mask_param)
+                f0 = np.random.randint(0, freq_bins - f)
+                spec[f0:f0+f, :] = spec.min()  # Mask to min value
+        
+        return spec
+    
+    def _normalize_single(self, spec):
+        """Normalize a single spectrogram to [0, 1]."""
         spec_min = spec.min()
         spec_max = spec.max()
-        spec_norm = (spec - spec_min) / (spec_max - spec_min + 1e-8)
+        return (spec - spec_min) / (spec_max - spec_min + 1e-8)
+    
+    def _resize_normalize_delta(self, spec):
+        """
+        Create 3-channel image with Delta features:
+        - Channel 0: Original spectrogram
+        - Channel 1: Delta (velocity) - 1st derivative
+        - Channel 2: Delta-Delta (acceleration) - 2nd derivative
+        """
+        # Compute delta features on original resolution (before resize)
+        # librosa.feature.delta computes derivative along time axis
+        delta = librosa.feature.delta(spec, order=1)
+        delta2 = librosa.feature.delta(spec, order=2)
+        
+        # Normalize each feature independently to [0, 1]
+        spec_norm = self._normalize_single(spec)
+        delta_norm = self._normalize_single(delta)
+        delta2_norm = self._normalize_single(delta2)
+        
+        # Resize to target size
         spec_resized = cv2.resize(spec_norm, (self.target_size[1], self.target_size[0]))
+        delta_resized = cv2.resize(delta_norm, (self.target_size[1], self.target_size[0]))
+        delta2_resized = cv2.resize(delta2_norm, (self.target_size[1], self.target_size[0]))
         
-        # Convert to 3 channels (RGB) by replicating
-        spec_3ch = np.stack([spec_resized]*3, axis=0) # [3, H, W]
+        # Stack as 3 channels: [Original, Delta, Delta-Delta]
+        spec_3ch = np.stack([spec_resized, delta_resized, delta2_resized], axis=0)  # [3, H, W]
         
-        # Normalize with ImageNet mean/std
-        # spec_resized is in [0, 1].
-        # We need to perform (x - mean) / std for each channel
+        # Apply ImageNet normalization
         for i in range(3):
             spec_3ch[i] = (spec_3ch[i] - self.mean[i]) / self.std[i]
             
-        return spec_3ch # Returns [3, H, W] numpy array
+        return spec_3ch  # Returns [3, H, W] numpy array
+
+    def _resize_normalize(self, spec):
+        """Legacy method - kept for compatibility."""
+        return self._resize_normalize_delta(spec)
 
 def get_hf_dataloaders(hf_id, batch_size=32, num_workers=4):
     # Hugging Face datasets usually have 'train', 'validation', 'test' splits or just 'train'.
     # AbstractTTS/IEMOCAP structure: checking...
     # If standard splits exist:
     try:
-        train_ds = IEMOCAPHFDataset(hf_id, split="train")
+        train_ds = IEMOCAPHFDataset(hf_id, split="train", augment=True)  # Enable augmentation for training
         # Try to load validation/test if exists, else split train
         try:
-            val_ds = IEMOCAPHFDataset(hf_id, split="validation")
+            val_ds = IEMOCAPHFDataset(hf_id, split="validation", augment=False)  # No augmentation for validation
         except:
              # If no validation split, manually split train using datasets library feature
              print("No validation split found. Automatically splitting train set (80/20)...")
@@ -187,11 +247,12 @@ def get_hf_dataloaders(hf_id, batch_size=32, num_workers=4):
              # Assign back to train_ds
              train_ds.indices = train_indices
              
-             # Create val_ds as a copy but with val indices
+             # Create val_ds as a copy but with val indices (no augmentation)
              import copy
              val_ds = copy.deepcopy(train_ds) 
              val_ds.indices = val_indices
-             print(f"Split complete. Train: {len(train_ds)}, Val: {len(val_ds)}")
+             val_ds.augment = False  # Disable augmentation for validation
+             print(f"Split complete. Train: {len(train_ds)} (augment=True), Val: {len(val_ds)} (augment=False)")
              
         test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if val_ds else None
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
