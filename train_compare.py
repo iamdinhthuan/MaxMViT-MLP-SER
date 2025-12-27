@@ -307,17 +307,24 @@ class CachedDatasetImproved(Dataset):
 # DATALOADERS AND TRAINING
 # ============================================================
 
-def get_dataloaders(config, use_improved=False):
-    """Get dataloaders with caching."""
+def get_dataloaders(config, mode="original"):
+    """Get dataloaders with caching.
+    
+    Args:
+        mode: 'original', 'delta_only', or 'delta_augment'
+    """
     ds_config = config.get('dataset', {})
     hf_id = ds_config.get('args', {}).get('hf_id', 'AbstractTTS/IEMOCAP')
     batch_size = ds_config.get('args', {}).get('batch_size', 16)
-    num_workers = ds_config.get('args', {}).get('num_workers', 8)  # Increased for faster loading
+    num_workers = ds_config.get('args', {}).get('num_workers', 8)
     
-    if use_improved:
-        train_ds = CachedDatasetImproved(hf_id, split="train", augment=True)
-    else:
+    if mode == "original":
         train_ds = CachedDatasetOriginal(hf_id, split="train")
+    else:
+        # Both delta_only and delta_augment use CachedDatasetImproved
+        # But delta_only has augment=False
+        use_augment = (mode == "delta_augment")
+        train_ds = CachedDatasetImproved(hf_id, split="train", augment=use_augment)
     
     # Split 80/20
     full_indices = train_ds.indices.copy()
@@ -332,8 +339,8 @@ def get_dataloaders(config, use_improved=False):
     
     val_ds = copy.deepcopy(train_ds)
     val_ds.indices = val_indices
-    if use_improved:
-        val_ds.augment = False
+    if hasattr(val_ds, 'augment'):
+        val_ds.augment = False  # Never augment validation
     
     print(f"Split: Train {len(train_ds)}, Val {len(val_ds)}")
     
@@ -345,7 +352,7 @@ def get_dataloaders(config, use_improved=False):
     return train_loader, val_loader
 
 
-def train_single(config, mode_name, use_improved, log_file):
+def train_single(config, mode_name, mode, log_file):
     """Train a single model with specified mode."""
     train_cfg = config['training']
     model_cfg = config['model']
@@ -359,7 +366,7 @@ def train_single(config, mode_name, use_improved, log_file):
     PATIENCE = train_cfg.get('patience', 5)
     
     # Data
-    train_loader, val_loader = get_dataloaders(config, use_improved=use_improved)
+    train_loader, val_loader = get_dataloaders(config, mode=mode)
     
     # Model
     num_classes = model_cfg.get('num_classes', 4)
@@ -479,7 +486,7 @@ def main():
     log_file = f"compare_{config.get('experiment_name', 'exp')}_{timestamp}.log"
     
     print(f"\n{'#'*60}")
-    print(f"# COMPARISON TRAINING: ORIGINAL vs IMPROVED (WITH CACHING)")
+    print(f"# COMPARISON: ORIGINAL vs DELTA_ONLY vs DELTA+AUGMENT")
     print(f"# Config: {args.config}")
     print(f"# Log: {log_file}")
     print(f"# Cache: {CACHE_DIR}/")
@@ -490,7 +497,9 @@ def main():
         f.write(f"Config: {args.config}\n")
         f.write("="*60 + "\n\n")
     
-    # Train ORIGINAL (no delta, no augment)
+    results = {}
+    
+    # PHASE 1: ORIGINAL (no delta, no augment)
     print("\n" + "="*60)
     print("PHASE 1: ORIGINAL (stack same spectrogram 3x, no augment)")
     print("="*60)
@@ -498,27 +507,39 @@ def main():
     with open(log_file, 'a') as f:
         f.write("PHASE 1: ORIGINAL\n")
     
-    original_best_acc, original_results = train_single(config, "ORIGINAL", use_improved=False, log_file=log_file)
+    results['original'], _ = train_single(config, "ORIGINAL", mode="original", log_file=log_file)
     
-    # Train IMPROVED (delta features + SpecAugment)
+    # PHASE 2: DELTA_ONLY (delta features, NO SpecAugment)
     print("\n" + "="*60)
-    print("PHASE 2: IMPROVED (delta features + SpecAugment)")
+    print("PHASE 2: DELTA_ONLY (delta features, NO SpecAugment)")
     print("="*60)
     
     with open(log_file, 'a') as f:
-        f.write("\nPHASE 2: IMPROVED\n")
+        f.write("\nPHASE 2: DELTA_ONLY\n")
     
-    improved_best_acc, improved_results = train_single(config, "IMPROVED", use_improved=True, log_file=log_file)
+    results['delta_only'], _ = train_single(config, "DELTA_ONLY", mode="delta_only", log_file=log_file)
+    
+    # PHASE 3: DELTA+AUGMENT (delta features + SpecAugment)
+    print("\n" + "="*60)
+    print("PHASE 3: DELTA+AUGMENT (delta features + SpecAugment)")
+    print("="*60)
+    
+    with open(log_file, 'a') as f:
+        f.write("\nPHASE 3: DELTA+AUGMENT\n")
+    
+    results['delta_augment'], _ = train_single(config, "DELTA+AUGMENT", mode="delta_augment", log_file=log_file)
     
     # Summary
     summary = f"""
 {'='*60}
 FINAL RESULTS
 {'='*60}
-ORIGINAL Best Val Accuracy: {original_best_acc:.2f}%
-IMPROVED Best Val Accuracy: {improved_best_acc:.2f}%
+ORIGINAL (stack 3x same)      : {results['original']:.2f}%
+DELTA_ONLY (delta, no augment): {results['delta_only']:.2f}%
+DELTA+AUGMENT (delta + augment): {results['delta_augment']:.2f}%
 
-Improvement: {improved_best_acc - original_best_acc:+.2f}%
+Delta vs Original: {results['delta_only'] - results['original']:+.2f}%
+Augment Effect:    {results['delta_augment'] - results['delta_only']:+.2f}%
 {'='*60}
 """
     print(summary)
