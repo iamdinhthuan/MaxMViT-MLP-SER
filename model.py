@@ -20,21 +20,14 @@ class MaxMViT_MLP(nn.Module):
         super(MaxMViT_MLP, self).__init__()
         
         # --- Path 1: CQT + MaxViT ---
-        # Using 'maxvit_rmlp_base_rw_224' or similar. 
-        # Paper mentions MaxViT.        # Paper likely uses base/large. Switching to base as per feedback.
-        # MaxViT Base
         self.maxvit = timm.create_model('maxvit_base_tf_224', pretrained=True, num_classes=0)
-        # MViTv2 Base
+        # --- Path 2: MEL + MViTv2 ---
         self.mvitv2 = timm.create_model('mvitv2_base', pretrained=True, num_classes=0)
 
-        # Print config to verify window sizes if possible, or just the model name
         print(f"Initialized MaxViT: {self.maxvit.default_cfg['architecture']}")
         
         # Calculate feature dimension
-        # We need to do a dummy forward pass or check config to know output dim.
-        # Typically: MaxViT Small ~768, MViTv2 Small ~768 (checking needed)
         with torch.no_grad():
-            # Use 224 for feature dim calc because we interpolate to 224 before backbone
             dummy_input = torch.randn(1, 3, 224, 224) 
             maxvit_dim = self.maxvit(dummy_input).shape[1]
             mvitv2_dim = self.mvitv2(dummy_input).shape[1]
@@ -42,19 +35,11 @@ class MaxMViT_MLP(nn.Module):
         fusion_dim = maxvit_dim + mvitv2_dim
         
         # --- MLP Head ---
-        # Dense layer -> Batch Norm -> Dropout -> Classification
         self.mlp = nn.Sequential(
             nn.Linear(fusion_dim, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.Dropout(dropout_rate),
-            nn.ReLU(), # Paper implies activation before classification? 
-                       # "Dense layer... followed by classification layer... softmax"
-                       # Usually Dense -> Activation -> BN -> Dropout -> FC.
-                       # Paper text: "dense layer, batch normalization layer, dropout layer, and a classification layer."
-                       # "two dense neural network layers activated by the ReLU function" (Ref to Vu et al. [13], not this work?)
-                       # Section III.D.1: "Dense layer... applies linear transformation... BN... Dropout... Classification layer computes probabilities... softmax"
-                       # Usually Linear implies just linear. But networks need non-linearity.
-                       # I will add ReLU for safety as "Dense Layer" typically implies a hidden layer with activation.
+            nn.ReLU(),
             nn.Linear(hidden_size, num_classes)
         )
 
@@ -63,349 +48,50 @@ class MaxMViT_MLP(nn.Module):
         Forward pass.
         
         Args:
-           cqt (torch.Tensor): CQT Spectrogram [Batch, 1, 244, 244] -> will repeat to 3 channels
-           mel (torch.Tensor): Mel-STFT Spectrogram [Batch, 1, 244, 244]
+           cqt (torch.Tensor): CQT Spectrogram [Batch, 3, H, W]
+           mel (torch.Tensor): Mel-STFT Spectrogram [Batch, 3, H, W]
         """
         # Expand 1 channel to 3 channels for backbone compatibility
         if cqt.size(1) == 1:
             cqt = cqt.repeat(1, 3, 1, 1)
         if mel.size(1) == 1:
             mel = mel.repeat(1, 3, 1, 1)
-            
-        # Resize to 224x224 if model expects it (timm models usually strict or better at native res)
-        # Paper says 244x244. 
-        # User requested 244x244.
         
-        # MaxViT usually requires input divisible by 32 (224 is, 244 is NOT).
-        # 244 / 32 = 7.625.
-        # If we pass 244, MaxViT might error or perform poorly due to window padding.
-        # However, to satisfy the requirement, we pass it through.
-        # If strict compatibility is needed, we could interpolate to 224 here if we encounter errors.
-        
-        # Fix: MaxViT architecture restricts input size to be divisible by window size (7).
-        # 244 is NOT divisible by 7. This causes a crash.
-        # To support the user's request for 244 input (from config), we MUST interpolate to 224 
-        # before the backbone to fit the fixed architecture constraints.
+        # Resize to 224x224 (MaxViT requires input divisible by 32)
         if cqt.shape[-1] != 224:
              cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
         if mel.shape[-1] != 224:
              mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
 
-        # Path 1
-        feat_maxvit = self.maxvit(cqt) # [B, Dim1]
+        # Path 1: CQT -> MaxViT
+        feat_maxvit = self.maxvit(cqt)  # [B, 768]
         
-        # Path 2
-        feat_mvitv2 = self.mvitv2(mel) # [B, Dim2]
+        # Path 2: MEL -> MViTv2
+        feat_mvitv2 = self.mvitv2(mel)  # [B, 768]
         
-        # Fusion
-        fused = torch.cat((feat_maxvit, feat_mvitv2), dim=1)
+        # Fusion: Simple Concatenation
+        fused = torch.cat((feat_maxvit, feat_mvitv2), dim=1)  # [B, 1536]
         
-        # MLP
+        # MLP Classification
         logits = self.mlp(fused)
         
         return logits
 
+
 def get_optimizer(model, lr=0.02):
     """
     Returns the optimizers as specified in the paper:
-    - MaxViT: Adam
+    - MaxViT + MLP: Adam
     - MViTv2: RAdam
-    - MLP: Assuming Adam (matches MaxViT or dominant)
     """
-    # Split parameters
     maxvit_params = list(model.maxvit.parameters())
     mvitv2_params = list(model.mvitv2.parameters())
     mlp_params = list(model.mlp.parameters())
     
-    # Check if model has cross-attention parameters
-    cross_attn_params = []
-    if hasattr(model, 'cross_attn'):
-        cross_attn_params = list(model.cross_attn.parameters())
-    
-    # Optimizer 1: MaxViT + MLP + CrossAttn -> Adam
-    optimizer1 = torch.optim.Adam(maxvit_params + mlp_params + cross_attn_params, lr=lr)
+    # Optimizer 1: MaxViT + MLP -> Adam
+    optimizer1 = torch.optim.Adam(maxvit_params + mlp_params, lr=lr)
     
     # Optimizer 2: MViTv2 -> RAdam
     optimizer2 = torch.optim.RAdam(mvitv2_params, lr=lr)
     
     return [optimizer1, optimizer2]
-
-
-class CrossAttentionFusion(nn.Module):
-    """
-    Cross-Attention module for fusing features from two modalities.
-    Each modality attends to the other to capture cross-modal relationships.
-    """
-    def __init__(self, dim=768, num_heads=8, dropout=0.1):
-        super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        
-        # Cross-attention: CQT attends to MEL
-        self.cross_attn_cqt = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
-        
-        # Cross-attention: MEL attends to CQT
-        self.cross_attn_mel = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
-        
-        # Layer norms
-        self.norm_cqt = nn.LayerNorm(dim)
-        self.norm_mel = nn.LayerNorm(dim)
-        
-        # FFN for fusion
-        self.fusion_ffn = nn.Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim, dim)
-        )
-        self.norm_fusion = nn.LayerNorm(dim)
-        
-    def forward(self, feat_cqt, feat_mel):
-        """
-        Args:
-            feat_cqt: [B, D] features from MaxViT (CQT path)
-            feat_mel: [B, D] features from MViTv2 (MEL path)
-        Returns:
-            fused: [B, D] cross-attention fused features
-        """
-        # Reshape to [B, 1, D] for attention
-        cqt = feat_cqt.unsqueeze(1)  # [B, 1, D]
-        mel = feat_mel.unsqueeze(1)  # [B, 1, D]
-        
-        # Cross-attention: CQT query, MEL key/value
-        cqt_attended, _ = self.cross_attn_cqt(cqt, mel, mel)
-        cqt_attended = self.norm_cqt(cqt + cqt_attended)  # Residual
-        
-        # Cross-attention: MEL query, CQT key/value
-        mel_attended, _ = self.cross_attn_mel(mel, cqt, cqt)
-        mel_attended = self.norm_mel(mel + mel_attended)  # Residual
-        
-        # Squeeze back to [B, D]
-        cqt_attended = cqt_attended.squeeze(1)
-        mel_attended = mel_attended.squeeze(1)
-        
-        # Concatenate and fuse
-        concat = torch.cat([cqt_attended, mel_attended], dim=1)  # [B, 2D]
-        fused = self.fusion_ffn(concat)  # [B, D]
-        fused = self.norm_fusion(fused + (cqt_attended + mel_attended) / 2)  # Residual
-        
-        return fused
-
-
-class MaxMViT_MLP_CrossAttn(nn.Module):
-    """
-    MaxMViT-MLP with Cross-Attention Fusion (single-token version - legacy).
-    """
-    def __init__(self, num_classes=7, hidden_size=512, dropout_rate=0.2):
-        super(MaxMViT_MLP_CrossAttn, self).__init__()
-        
-        # Path 1: CQT + MaxViT
-        self.maxvit = timm.create_model('maxvit_base_tf_224', pretrained=True, num_classes=0)
-        
-        # Path 2: MEL + MViTv2
-        self.mvitv2 = timm.create_model('mvitv2_base', pretrained=True, num_classes=0)
-        
-        print(f"Initialized MaxViT: {self.maxvit.default_cfg['architecture']}")
-        
-        # Get feature dimensions
-        with torch.no_grad():
-            dummy_input = torch.randn(1, 3, 224, 224)
-            maxvit_dim = self.maxvit(dummy_input).shape[1]
-            mvitv2_dim = self.mvitv2(dummy_input).shape[1]
-        
-        # Cross-Attention Fusion (both dims should be 768 for base models)
-        assert maxvit_dim == mvitv2_dim, f"Feature dims must match: {maxvit_dim} vs {mvitv2_dim}"
-        self.cross_attn = CrossAttentionFusion(dim=maxvit_dim, num_heads=8, dropout=dropout_rate)
-        
-        # MLP Head (input is now just maxvit_dim since cross-attn outputs single dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(maxvit_dim, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_size, num_classes)
-        )
-
-    def forward(self, cqt, mel):
-        # Expand to 3 channels if needed
-        if cqt.size(1) == 1:
-            cqt = cqt.repeat(1, 3, 1, 1)
-        if mel.size(1) == 1:
-            mel = mel.repeat(1, 3, 1, 1)
-        
-        # Resize to 224x224
-        if cqt.shape[-1] != 224:
-            cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
-        if mel.shape[-1] != 224:
-            mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
-
-        # Extract features
-        feat_maxvit = self.maxvit(cqt)  # [B, 768]
-        feat_mvitv2 = self.mvitv2(mel)  # [B, 768]
-        
-        # Cross-Attention Fusion
-        fused = self.cross_attn(feat_maxvit, feat_mvitv2)  # [B, 768]
-        
-        # Classification
-        logits = self.mlp(fused)
-        
-        return logits
-
-
-# ============================================================
-# SPATIAL CROSS-ATTENTION (New - operates on 49 spatial tokens)
-# ============================================================
-
-class SpatialCrossAttention(nn.Module):
-    """
-    Spatial Cross-Attention module that operates on spatial feature maps.
-    Each spatial location can attend to all spatial locations of the other modality.
-    
-    Input: [B, 49, D] spatial features from each backbone
-    Output: [B, D] fused global feature
-    """
-    def __init__(self, dim=768, num_heads=8, num_layers=2, dropout=0.1):
-        super().__init__()
-        self.dim = dim
-        
-        # Multi-layer cross-attention
-        self.layers = nn.ModuleList()
-        for _ in range(num_layers):
-            self.layers.append(nn.ModuleDict({
-                # CQT attends to MEL
-                'cross_attn_cqt': nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True),
-                'norm_cqt': nn.LayerNorm(dim),
-                'ffn_cqt': nn.Sequential(
-                    nn.Linear(dim, dim * 4),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(dim * 4, dim),
-                    nn.Dropout(dropout)
-                ),
-                'norm_ffn_cqt': nn.LayerNorm(dim),
-                
-                # MEL attends to CQT
-                'cross_attn_mel': nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True),
-                'norm_mel': nn.LayerNorm(dim),
-                'ffn_mel': nn.Sequential(
-                    nn.Linear(dim, dim * 4),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(dim * 4, dim),
-                    nn.Dropout(dropout)
-                ),
-                'norm_ffn_mel': nn.LayerNorm(dim),
-            }))
-        
-        # Final fusion: concat and project
-        self.fusion = nn.Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.LayerNorm(dim),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-        
-    def forward(self, feat_cqt, feat_mel):
-        """
-        Args:
-            feat_cqt: [B, 49, D] spatial features from MaxViT
-            feat_mel: [B, 49, D] spatial features from MViTv2
-        Returns:
-            fused: [B, D] fused global feature
-        """
-        cqt = feat_cqt
-        mel = feat_mel
-        
-        # Apply cross-attention layers
-        for layer in self.layers:
-            # CQT attends to MEL
-            cqt_attn, _ = layer['cross_attn_cqt'](cqt, mel, mel)
-            cqt = layer['norm_cqt'](cqt + cqt_attn)
-            cqt = layer['norm_ffn_cqt'](cqt + layer['ffn_cqt'](cqt))
-            
-            # MEL attends to CQT
-            mel_attn, _ = layer['cross_attn_mel'](mel, cqt, cqt)
-            mel = layer['norm_mel'](mel + mel_attn)
-            mel = layer['norm_ffn_mel'](mel + layer['ffn_mel'](mel))
-        
-        # Global average pooling
-        cqt_pooled = cqt.mean(dim=1)  # [B, D]
-        mel_pooled = mel.mean(dim=1)  # [B, D]
-        
-        # Fuse
-        fused = torch.cat([cqt_pooled, mel_pooled], dim=1)  # [B, 2D]
-        fused = self.fusion(fused)  # [B, D]
-        
-        return fused
-
-
-class MaxMViT_MLP_SpatialCrossAttn(nn.Module):
-    """
-    MaxMViT-MLP with SPATIAL Cross-Attention Fusion.
-    
-    Cross-attention operates on 49 spatial tokens (7x7 grid) from each backbone,
-    allowing the model to learn which spatial regions of CQT correspond to
-    which regions in MEL spectrogram.
-    """
-    def __init__(self, num_classes=7, hidden_size=512, dropout_rate=0.2, num_cross_layers=2):
-        super(MaxMViT_MLP_SpatialCrossAttn, self).__init__()
-        
-        # Path 1: CQT + MaxViT
-        self.maxvit = timm.create_model('maxvit_base_tf_224', pretrained=True, num_classes=0)
-        
-        # Path 2: MEL + MViTv2
-        self.mvitv2 = timm.create_model('mvitv2_base', pretrained=True, num_classes=0)
-        
-        print(f"Initialized MaxViT (Spatial Cross-Attn): {self.maxvit.default_cfg['architecture']}")
-        
-        # Feature dimension (768 for base models)
-        self.feat_dim = 768
-        
-        # Spatial Cross-Attention
-        self.cross_attn = SpatialCrossAttention(
-            dim=self.feat_dim, 
-            num_heads=8, 
-            num_layers=num_cross_layers,
-            dropout=dropout_rate
-        )
-        
-        # MLP Head
-        self.mlp = nn.Sequential(
-            nn.Linear(self.feat_dim, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_size, num_classes)
-        )
-
-    def forward(self, cqt, mel):
-        # Expand to 3 channels if needed
-        if cqt.size(1) == 1:
-            cqt = cqt.repeat(1, 3, 1, 1)
-        if mel.size(1) == 1:
-            mel = mel.repeat(1, 3, 1, 1)
-        
-        # Resize to 224x224
-        if cqt.shape[-1] != 224:
-            cqt = torch.nn.functional.interpolate(cqt, size=(224, 224), mode='bilinear', align_corners=False)
-        if mel.shape[-1] != 224:
-            mel = torch.nn.functional.interpolate(mel, size=(224, 224), mode='bilinear', align_corners=False)
-
-        # Extract SPATIAL features (before global pooling)
-        # MaxViT: forward_features returns [B, C, H, W] = [B, 768, 7, 7]
-        feat_maxvit = self.maxvit.forward_features(cqt)  # [B, 768, 7, 7]
-        
-        # MViTv2: forward_features returns [B, N, C] = [B, 49, 768]
-        feat_mvitv2 = self.mvitv2.forward_features(mel)  # [B, 49, 768]
-        
-        # Reshape MaxViT features to [B, 49, 768]
-        B = feat_maxvit.shape[0]
-        feat_maxvit = feat_maxvit.flatten(2).permute(0, 2, 1)  # [B, 768, 49] -> [B, 49, 768]
-        
-        # Apply Spatial Cross-Attention
-        fused = self.cross_attn(feat_maxvit, feat_mvitv2)  # [B, 768]
-        
-        # Classification
-        logits = self.mlp(fused)
-        
-        return logits
