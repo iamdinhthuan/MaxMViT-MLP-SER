@@ -7,7 +7,7 @@ import os
 import pickle
 from datetime import datetime
 from utils import load_config, seed_everything
-from model import MaxMViT_MLP, MaxMViT_MLP_CrossAttn, get_optimizer
+from model import MaxMViT_MLP, MaxMViT_MLP_CrossAttn, MaxMViT_MLP_SpatialCrossAttn, get_optimizer
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -200,8 +200,12 @@ def get_dataloaders(config):
 # TRAINING
 # ============================================================
 
-def train_single(config, mode_name, use_cross_attn, log_file, train_loader, val_loader):
-    """Train a single model."""
+def train_single(config, mode_name, model_type, log_file, train_loader, val_loader):
+    """Train a single model.
+    
+    Args:
+        model_type: 'original', 'cross_attn', or 'spatial_cross_attn'
+    """
     train_cfg = config['training']
     model_cfg = config['model']
     
@@ -215,8 +219,11 @@ def train_single(config, mode_name, use_cross_attn, log_file, train_loader, val_
     
     # Model
     num_classes = model_cfg.get('num_classes', 4)
-    if use_cross_attn:
-        print(f"[{mode_name}] Using Cross-Attention Fusion")
+    if model_type == 'spatial_cross_attn':
+        print(f"[{mode_name}] Using SPATIAL Cross-Attention Fusion (49 tokens)")
+        model = MaxMViT_MLP_SpatialCrossAttn(num_classes=num_classes)
+    elif model_type == 'cross_attn':
+        print(f"[{mode_name}] Using Cross-Attention Fusion (single token)")
         model = MaxMViT_MLP_CrossAttn(num_classes=num_classes)
     else:
         print(f"[{mode_name}] Using Simple Concatenation")
@@ -348,7 +355,7 @@ def main():
     log_file = f"compare_{config.get('experiment_name', 'exp')}_{timestamp}.log"
     
     print(f"\n{'#'*60}")
-    print(f"# COMPARISON: ORIGINAL (Concat) vs CROSS-ATTENTION")
+    print(f"# COMPARISON: ORIGINAL vs SPATIAL CROSS-ATTENTION")
     print(f"# Config: {args.config}")
     print(f"# Log: {log_file}")
     print(f"# Split: 80% Train / 10% Val / 10% Test")
@@ -373,7 +380,7 @@ def main():
     with open(log_file, 'a') as f:
         f.write("PHASE 1: ORIGINAL (Concatenation)\n")
     
-    model_orig, val_acc_orig = train_single(config, "ORIGINAL", use_cross_attn=False, 
+    model_orig, val_acc_orig = train_single(config, "ORIGINAL", model_type="original", 
                                              log_file=log_file, train_loader=train_loader, val_loader=val_loader)
     test_acc_orig = evaluate_test(model_orig, test_loader, DEVICE)
     results['original'] = {'val': val_acc_orig, 'test': test_acc_orig}
@@ -382,34 +389,34 @@ def main():
     with open(log_file, 'a') as f:
         f.write(f"[ORIGINAL] Test Accuracy: {test_acc_orig:.2f}%\n")
     
-    # PHASE 2: CROSS-ATTENTION
+    # PHASE 2: SPATIAL CROSS-ATTENTION (49 tokens)
     print("\n" + "="*60)
-    print("PHASE 2: CROSS-ATTENTION Fusion")
+    print("PHASE 2: SPATIAL CROSS-ATTENTION (49 spatial tokens)")
     print("="*60)
     
     with open(log_file, 'a') as f:
-        f.write("\nPHASE 2: CROSS-ATTENTION\n")
+        f.write("\nPHASE 2: SPATIAL CROSS-ATTENTION\n")
     
-    model_cross, val_acc_cross = train_single(config, "CROSS-ATTN", use_cross_attn=True, 
-                                               log_file=log_file, train_loader=train_loader, val_loader=val_loader)
-    test_acc_cross = evaluate_test(model_cross, test_loader, DEVICE)
-    results['cross_attn'] = {'val': val_acc_cross, 'test': test_acc_cross}
-    print(f"[CROSS-ATTN] Test Accuracy: {test_acc_cross:.2f}%")
+    model_spatial, val_acc_spatial = train_single(config, "SPATIAL-CROSS", model_type="spatial_cross_attn", 
+                                                   log_file=log_file, train_loader=train_loader, val_loader=val_loader)
+    test_acc_spatial = evaluate_test(model_spatial, test_loader, DEVICE)
+    results['spatial_cross'] = {'val': val_acc_spatial, 'test': test_acc_spatial}
+    print(f"[SPATIAL-CROSS] Test Accuracy: {test_acc_spatial:.2f}%")
     
     with open(log_file, 'a') as f:
-        f.write(f"[CROSS-ATTN] Test Accuracy: {test_acc_cross:.2f}%\n")
+        f.write(f"[SPATIAL-CROSS] Test Accuracy: {test_acc_spatial:.2f}%\n")
     
     # Summary
     summary = f"""
 {'='*60}
 FINAL RESULTS
 {'='*60}
-                    Val Acc     Test Acc
-ORIGINAL (Concat):  {results['original']['val']:.2f}%      {results['original']['test']:.2f}%
-CROSS-ATTENTION:    {results['cross_attn']['val']:.2f}%      {results['cross_attn']['test']:.2f}%
+                        Val Acc     Test Acc
+ORIGINAL (Concat):      {results['original']['val']:.2f}%      {results['original']['test']:.2f}%
+SPATIAL CROSS-ATTN:     {results['spatial_cross']['val']:.2f}%      {results['spatial_cross']['test']:.2f}%
 
-Cross-Attn vs Original (Val):  {results['cross_attn']['val'] - results['original']['val']:+.2f}%
-Cross-Attn vs Original (Test): {results['cross_attn']['test'] - results['original']['test']:+.2f}%
+Spatial vs Original (Val):  {results['spatial_cross']['val'] - results['original']['val']:+.2f}%
+Spatial vs Original (Test): {results['spatial_cross']['test'] - results['original']['test']:+.2f}%
 {'='*60}
 """
     print(summary)
